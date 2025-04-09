@@ -1,5 +1,9 @@
-# game/views.py
-from rest_framework import viewsets
+#game/view.py
+from rest_framework import viewsets, status
+from rest_framework.response import Response
+from rest_framework.decorators import action
+from django.db.models import Q
+from django.utils import timezone
 from .models import User, Difficulty, Category, CardPair, Game, Score, Move
 from .serializers import (
     UserSerializer, DifficultySerializer, CategorySerializer,
@@ -24,45 +28,75 @@ class CategoryViewSet(viewsets.ModelViewSet):
 class CardPairViewSet(viewsets.ModelViewSet):
     serializer_class = CardPairSerializer
     lookup_field = 'pair_id'
+    queryset = CardPair.objects.all()
     
     def get_queryset(self):
-        queryset = CardPair.objects.select_related('difficulty', 'category')
+        queryset = super().get_queryset().select_related('difficulty', 'category')
         difficulty = self.request.query_params.get('difficulty')
         category = self.request.query_params.get('category')
         
-        if difficulty:
-            queryset = queryset.filter(difficulty_id=difficulty)
-        if category:
-            queryset = queryset.filter(category_id=category)
-            
+        if difficulty and category:
+            try:
+                queryset = queryset.filter(
+                    difficulty_id=int(difficulty),
+                    category_id=int(category)
+                )
+            except (ValueError, TypeError):
+                pass
         return queryset
 
 class GameViewSet(viewsets.ModelViewSet):
+    queryset = Game.objects.all()
     serializer_class = GameSerializer
     lookup_field = 'game_id'
-    queryset = Game.objects.select_related('user', 'difficulty').prefetch_related(
-        'score_set', 'move_set'
-    ).order_by('-start_time')
+    
+    def get_queryset(self):
+        queryset = super().get_queryset().select_related('user', 'difficulty', 'category')
+        user = self.request.query_params.get('user')
+        
+        if user:
+            try:
+                queryset = queryset.filter(user_id=int(user))
+            except (ValueError, TypeError):
+                pass
+        return queryset.order_by('-start_time')
+    
+    @action(detail=True, methods=['patch'])
+    def complete(self, request, game_id=None):
+        game = self.get_object()
+        game.completed = True
+        game.end_time = timezone.now()
+        game.save()
+        return Response({'status': 'game completed'})
 
 class ScoreViewSet(viewsets.ModelViewSet):
+    queryset = Score.objects.all()
     serializer_class = ScoreSerializer
     lookup_field = 'score_id'
     
     def get_queryset(self):
-        queryset = Score.objects.select_related('user', 'game')
+        queryset = super().get_queryset().select_related('user', 'game')
         user = self.request.query_params.get('user')
         
         if user:
-            queryset = queryset.filter(user_id=user)
-            
+            try:
+                queryset = queryset.filter(user_id=int(user))
+            except (ValueError, TypeError):
+                pass
         return queryset.order_by('-points')
 
 class MoveViewSet(viewsets.ModelViewSet):
+    queryset = Move.objects.all()
     serializer_class = MoveSerializer
     lookup_field = 'move_id'
     
     def get_queryset(self):
+        queryset = super().get_queryset().select_related('game', 'card_a', 'card_b')
         game = self.request.query_params.get('game')
+        
         if game:
-            return Move.objects.filter(game_id=game).select_related('card_a', 'card_b')
-        return Move.objects.all().select_related('card_a', 'card_b')
+            try:
+                queryset = queryset.filter(game_id=int(game))
+            except (ValueError, TypeError):
+                pass
+        return queryset.order_by('move_time')
